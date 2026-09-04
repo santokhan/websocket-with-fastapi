@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Text and Image Upload</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="grid min-h-screen place-items-center bg-slate-100 p-6 text-slate-900">
+    <main class="w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-900/10">
+        <h1 class="mb-2 text-2xl font-bold">WebSocket test console</h1>
+        <p class="mb-6 text-slate-500">Send text, an image, or both through the FastAPI WebSocket server.</p>
+
+        <div id="status"
+            class="mb-6 inline-flex items-center gap-2 rounded-full bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700">
+            <span class="h-2 w-2 rounded-full bg-current"></span>
+            Connecting...
+        </div>
+
+        <form id="upload-form" class="space-y-5">
+            <div>
+                <label for="message" class="mb-2 block font-semibold">Text <span class="font-normal text-slate-400">(optional)</span></label>
+                <textarea id="message" name="message" rows="3" placeholder="Type a message"
+                    class="block w-full resize-y rounded-lg border border-slate-300 px-3.5 py-3 outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100"></textarea>
+            </div>
+
+            <div>
+                <label for="image" class="mb-2 block font-semibold">Image <span class="font-normal text-slate-400">(optional)</span></label>
+                <input id="image" name="image" type="file" accept="image/*"
+                    class="block w-full cursor-pointer rounded-lg border border-slate-300 bg-white text-sm text-slate-600 file:mr-4 file:border-0 file:bg-blue-50 file:px-4 file:py-3 file:font-semibold file:text-blue-700 hover:file:bg-blue-100">
+            </div>
+
+            <div id="preview-wrapper" class="hidden overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                <img id="preview" class="max-h-64 w-full object-contain" alt="Selected image preview">
+            </div>
+
+            <button id="send-button" type="submit" disabled
+                class="w-full rounded-lg bg-blue-600 px-5 py-3 font-bold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50">
+                Send
+            </button>
+        </form>
+
+        <section class="mt-8 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+            <div class="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3">
+                <h2 class="font-semibold text-slate-800">Activity</h2>
+                <span class="text-xs text-slate-400">Live events</span>
+            </div>
+            <div id="log" aria-live="polite" class="flex max-h-64 min-h-32 flex-col gap-2 overflow-auto p-4">
+                <p id="empty-log" class="text-sm text-slate-400">Waiting for connection...</p>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const socket = new WebSocket(`${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`);
+        const status = document.querySelector('#status');
+        const form = document.querySelector('#upload-form');
+        const messageInput = document.querySelector('#message');
+        const imageInput = document.querySelector('#image');
+        const previewWrapper = document.querySelector('#preview-wrapper');
+        const preview = document.querySelector('#preview');
+        const sendButton = document.querySelector('#send-button');
+        const log = document.querySelector('#log');
+        const emptyLog = document.querySelector('#empty-log');
+
+        function addLog(text, type = 'event') {
+            if (emptyLog.isConnected) emptyLog.remove();
+
+            const entry = document.createElement('div');
+            const label = type === 'sent' ? 'You' : type === 'received' ? 'Server' : 'System';
+            const colors = type === 'sent'
+                ? 'ml-auto bg-blue-600 text-white'
+                : type === 'received'
+                    ? 'mr-auto bg-emerald-100 text-emerald-900'
+                    : 'mx-auto bg-slate-200 text-slate-600';
+
+            entry.className = `max-w-[85%] rounded-xl px-3 py-2 text-sm ${colors}`;
+            entry.innerHTML = `<span class="mb-0.5 block text-[10px] font-bold uppercase tracking-wide opacity-70">${label}</span>`;
+            const message = document.createElement('span');
+            message.className = 'break-words';
+            message.textContent = text;
+            entry.appendChild(message);
+            log.appendChild(entry);
+            log.scrollTop = log.scrollHeight;
+        }
+
+        function updateButton() {
+            sendButton.disabled = socket.readyState !== WebSocket.OPEN ||
+                (!messageInput.value.trim() && !imageInput.files[0]);
+        }
+
+        socket.addEventListener('open', () => {
+            status.textContent = 'Connected';
+            status.className = 'mb-6 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700';
+            updateButton();
+            addLog('Connected to FastAPI WebSocket');
+        });
+
+        socket.addEventListener('message', (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                addLog(data.message || event.data, 'received');
+            } catch {
+                addLog(event.data, 'received');
+            }
+        });
+
+        socket.addEventListener('close', () => {
+            status.textContent = 'Disconnected';
+            status.className = 'mb-6 inline-flex items-center gap-2 rounded-full bg-orange-50 px-3 py-2 text-sm font-semibold text-orange-700';
+            updateButton();
+            addLog('Connection closed');
+        });
+
+        socket.addEventListener('error', () => addLog('WebSocket error - is the server running?'));
+
+        messageInput.addEventListener('input', updateButton);
+
+        imageInput.addEventListener('change', () => {
+            const file = imageInput.files[0];
+            if (file) {
+                preview.src = URL.createObjectURL(file);
+                previewWrapper.classList.remove('hidden');
+            } else {
+                previewWrapper.classList.add('hidden');
+            }
+            updateButton();
+        });
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            const text = messageInput.value.trim();
+            const file = imageInput.files[0];
+            if ((!text && !file) || socket.readyState !== WebSocket.OPEN) return;
+
+            sendButton.disabled = true;
+
+            if (text) {
+                socket.send(JSON.stringify({ type: 'text', message: text }));
+                addLog(text, 'sent');
+            }
+
+            if (file) {
+                socket.send(JSON.stringify({
+                    type: 'image-metadata',
+                    name: file.name,
+                    mimeType: file.type
+                }));
+                socket.send(await file.arrayBuffer());
+                addLog(`Image: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`, 'sent');
+            }
+
+            form.reset();
+            previewWrapper.classList.add('hidden');
+            updateButton();
+        });
+    </script>
+</body>
+</html>
